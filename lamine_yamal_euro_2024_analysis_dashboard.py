@@ -317,7 +317,7 @@ def get_player_stats(df, player_name, minutes_played_series, team_name):
         successful_passes = len(df_passes[df_passes['pass_outcome'].isnull()])
         pass_success_rate = (successful_passes / total_passes * 100) if total_passes > 0 else 0
 
-        assists = len(df_passes[df_passes['pass_shot_assist'].notnull() | df_passes['pass_goal_assist'].notnull()])
+        assists = len(df_passes[df_passes['pass_goal_assist'].notnull()])
 
         df_shots = df_player[df_player['type'] == 'Shot']
         total_shots = len(df_shots)
@@ -487,7 +487,6 @@ def main():
         if zscore_fig: st.pyplot(zscore_fig)
     else:
         st.warning(f"Z-scores cannot be computed for {selected_player} as they are not in the comparison group or have 0 minutes played.")
-
 
 
 if __name__ == '__main__':
