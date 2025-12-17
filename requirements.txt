@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 streamlit
 pandas
 statsbombpy
@@ -6,13 +5,4 @@ mplsoccer
 matplotlib
 numpy
 Pillow
-=======
-streamlit
-pandas
-statsbombpy
-mplsoccer
-matplotlib
-numpy
-Pillow
->>>>>>> f547279354a9dae2b95ffc0908e484029f047633
 scipy
