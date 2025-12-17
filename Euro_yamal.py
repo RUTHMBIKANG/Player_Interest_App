@@ -14,7 +14,7 @@ from scipy.ndimage import gaussian_filter
 COMPETITION_ID = 55
 SEASON_ID = 282
 TARGET_PLAYER = "Lamine Yamal Nasraoui Ebana"
-TARGET_TEAM = "Spain"
+TARGET_TEAM = "Spain" 
 
 # Set a page config for a better looking app
 st.set_page_config(layout="wide", page_title="Euro 2024 Analysis")
