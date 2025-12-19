@@ -1,5 +1,4 @@
-# STREAMLIT VERSION OF YOUR SCRIPT
-# Cache ONLY where necessary (data + minutes), NEVER plots
+# STREAMLIT VERSION — FULL FEATURE + STREAMLIT CLOUD SAFE
 
 import streamlit as st
 import pandas as pd
@@ -10,53 +9,38 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 import numpy as np
 
-# --------------------------------------------------
-# Streamlit & Matplotlib setup
-# --------------------------------------------------
 plt.style.use("default")
 st.set_page_config(page_title="Euro 2024 Player Analysis", layout="wide")
 
-# --------------------------------------------------
-# Configuration
-# --------------------------------------------------
 COMPETITION_ID = 55
 SEASON_ID = 282
-TARGET_TEAM = "Spain"
 
 # --------------------------------------------------
-# DATA LOADING (CACHED)
+# DATA LOADING (SAFE CACHE)
 # --------------------------------------------------
 @st.cache_data(show_spinner=True)
-def load_euro_data(comp_id, season_id):
-    matches_df = sb.matches(competition_id=comp_id, season_id=season_id)
-    match_ids = matches_df['match_id'].tolist()
+def load_match_ids(comp_id, season_id):
+    matches = sb.matches(competition_id=comp_id, season_id=season_id)
+    return matches["match_id"].tolist()
 
-    all_events = []
-    for match_id in match_ids:
+def load_events(match_ids):
+    events = []
+    for mid in match_ids:
         try:
-            all_events.append(sb.events(match_id=match_id))
+            events.append(sb.events(match_id=mid))
         except Exception:
             continue
-
-    if not all_events:
-        return pd.DataFrame(), pd.DataFrame()
-
-    return pd.concat(all_events, ignore_index=True), matches_df
-
+    return pd.concat(events, ignore_index=True)
 
 # --------------------------------------------------
-# MINUTES PLAYED (CACHED + SAFE)
+# MINUTES PLAYED (NO CACHE)
 # --------------------------------------------------
-@st.cache_data
 def get_minutes_played(events_df):
     player_minutes = {}
 
     for match_id in events_df['match_id'].unique():
         df = events_df[events_df['match_id'] == match_id].copy()
         df.sort_values(['period', 'minute', 'second'], inplace=True)
-
-        if df.empty:
-            continue
 
         end_time = (
             (df.iloc[-1]['period'] - 1) * 45 * 60
@@ -67,12 +51,10 @@ def get_minutes_played(events_df):
         players_on = {}
 
         for _, row in df[df['type'] == 'Starting XI'].iterrows():
-            tactics = row.get('tactics')
-            if isinstance(tactics, dict):
-                for p in tactics.get('lineup', []):
-                    name = p['player']['name']
-                    players_on[name] = 0
-                    player_minutes.setdefault(name, 0)
+            for p in row.get('tactics', {}).get('lineup', []):
+                name = p['player']['name']
+                players_on[name] = 0
+                player_minutes.setdefault(name, 0)
 
         for _, row in df.iterrows():
             current_time = (
@@ -82,135 +64,143 @@ def get_minutes_played(events_df):
             )
 
             if row['type'] == 'Substitution':
-                off_player = row.get('player')
-                on_player = None
+                off = row.get('player')
+                on = row.get('substitution', {}).get('replacement', {}).get('name')
 
-                sub = row.get('substitution')
-                if isinstance(sub, dict):
-                    rep = sub.get('replacement')
-                    if isinstance(rep, dict):
-                        on_player = rep.get('name')
+                if off in players_on:
+                    player_minutes[off] += (current_time - players_on[off]) / 60
+                    players_on.pop(off)
 
-                if off_player in players_on:
-                    player_minutes[off_player] += (current_time - players_on[off_player]) / 60
-                    players_on.pop(off_player)
-
-                if on_player:
-                    players_on[on_player] = current_time
-                    player_minutes.setdefault(on_player, 0)
+                if on:
+                    players_on[on] = current_time
+                    player_minutes.setdefault(on, 0)
 
         for p, start in players_on.items():
             player_minutes[p] += (end_time - start) / 60
 
     return pd.DataFrame(player_minutes.items(), columns=['player', 'minutes_played'])
 
+# --------------------------------------------------
+# UTILITY: COORDINATE SANITIZER
+# --------------------------------------------------
+def extract_xy(df, col):
+    return pd.DataFrame(df[col].tolist(), columns=['x', 'y'], index=df.index)
 
 # --------------------------------------------------
-# PLOTTING FUNCTIONS (❌ NOT CACHED)
+# PASS MAP (WITH ARROWS + LEGEND)
 # --------------------------------------------------
-def plot_player_actions(df_player, action_type, title):
-    df = df_player[df_player['type'] == action_type].copy()
+def plot_pass_map(df):
+    df = df[df['type'] == 'Pass'].copy()
+    df = df[df['pass_end_location'].apply(lambda x: isinstance(x, list) and len(x) == 2)]
+
     if df.empty:
         return None
 
-    df['x'] = df['location'].str[0]
-    df['y'] = df['location'].str[1]
+    df[['x', 'y']] = extract_xy(df, 'location')
+    df[['end_x', 'end_y']] = extract_xy(df, 'pass_end_location')
 
     pitch = Pitch(pitch_color='white', line_color='black', stripe=False)
     fig, ax = pitch.draw(figsize=(10, 7))
-    fig.patch.set_facecolor('white')
-    ax.set_facecolor('white')
 
-    legend_elements = []
+    success = df[df['pass_outcome'].isna()]
+    fail = df[df['pass_outcome'].notna()]
+    assist = df[df['pass_goal_assist'].notna()]
 
-    if action_type == 'Pass':
-        success = df[df['pass_outcome'].isna()]
-        fail = df[df['pass_outcome'].notna()]
-        assists = df[df['pass_goal_assist'].notna()]
+    pitch.arrows(success.x, success.y, success.end_x, success.end_y,
+                 color='green', width=2, ax=ax)
+    pitch.arrows(fail.x, fail.y, fail.end_x, fail.end_y,
+                 color='red', linestyle=':', width=2, ax=ax)
+    pitch.arrows(assist.x, assist.y, assist.end_x, assist.end_y,
+                 color='gold', width=3, ax=ax)
 
-        pitch.arrows(
-            success['x'], success['y'],
-            success['pass_end_location'].str[0],
-            success['pass_end_location'].str[1],
-            width=2, headwidth=6, headlength=6,
-            color='green', ax=ax
-        )
+    legend = [
+        Line2D([0], [0], color='green', lw=3, label='Successful Pass'),
+        Line2D([0], [0], color='red', lw=3, linestyle=':', label='Unsuccessful Pass'),
+        Line2D([0], [0], color='gold', lw=4, label='Assist'),
+    ]
+    ax.legend(handles=legend, bbox_to_anchor=(1.02, 1), loc='upper left', frameon=False)
+    ax.set_title("Pass Map")
 
-        pitch.arrows(
-            fail['x'], fail['y'],
-            fail['pass_end_location'].str[0],
-            fail['pass_end_location'].str[1],
-            width=2, headwidth=6, headlength=6,
-            color='red', linestyle=':', ax=ax
-        )
-
-        pitch.arrows(
-            assists['x'], assists['y'],
-            assists['pass_end_location'].str[0],
-            assists['pass_end_location'].str[1],
-            width=3, headwidth=8, headlength=8,
-            color='gold', ax=ax
-        )
-
-        legend_elements = [
-            Line2D([0], [0], color='green', lw=3, label='Successful Pass'),
-            Line2D([0], [0], color='red', lw=3, linestyle=':', label='Unsuccessful Pass'),
-            Line2D([0], [0], color='gold', lw=4, label='Assist')
-        ]
-
-    elif action_type == 'Shot':
-        goals = df[df['shot_outcome'] == 'Goal']
-
-        pitch.scatter(df['x'], df['y'], s=120, c='orange', ax=ax)
-        pitch.scatter(goals['x'], goals['y'], s=300, marker='football', ax=ax)
-
-        legend_elements = [
-            Patch(facecolor='orange', label='Shot'),
-            Patch(facecolor='white', edgecolor='black', label='Goal')
-        ]
-
-    elif action_type == 'Dribble':
-        complete = df[df['dribble_outcome'] == 'Complete']
-        incomplete = df[df['dribble_outcome'] == 'Incomplete']
-
-        pitch.scatter(complete['x'], complete['y'], c='green', s=120, ax=ax)
-        pitch.scatter(incomplete['x'], incomplete['y'], c='red', s=120, ax=ax)
-
-        legend_elements = [
-            Patch(facecolor='green', label='Successful Dribble'),
-            Patch(facecolor='red', label='Unsuccessful Dribble')
-        ]
-
-    if legend_elements:
-        ax.legend(
-            handles=legend_elements,
-            loc='upper left',
-            bbox_to_anchor=(1.02, 1),
-            frameon=False
-        )
-
-    ax.set_title(title)
     return fig
 
-
-def plot_heatmap(df_player):
-    df = df_player[df_player['type'].isin(['Shot', 'Pass', 'Dribble'])].copy()
+# --------------------------------------------------
+# SHOT MAP
+# --------------------------------------------------
+def plot_shot_map(df):
+    df = df[df['type'] == 'Shot'].copy()
     if df.empty:
         return None
 
-    df['x'] = df['location'].str[0]
-    df['y'] = df['location'].str[1]
+    df[['x', 'y']] = extract_xy(df, 'location')
+    goals = df[df['shot_outcome'] == 'Goal']
 
     pitch = Pitch(pitch_color='white', line_color='black', stripe=False)
     fig, ax = pitch.draw(figsize=(10, 7))
-    fig.patch.set_facecolor('white')
-    ax.set_facecolor('white')
 
-    pitch.kdeplot(df['x'], df['y'], fill=True, cmap='hot', ax=ax)
+    pitch.scatter(df.x, df.y, s=120, color='orange', ax=ax)
+    pitch.scatter(goals.x, goals.y, s=300, marker='football', ax=ax)
+
+    ax.legend(
+        handles=[
+            Patch(facecolor='orange', label='Shot'),
+            Patch(facecolor='white', edgecolor='black', label='Goal')
+        ],
+        bbox_to_anchor=(1.02, 1),
+        loc='upper left',
+        frameon=False
+    )
+    ax.set_title("Shot Map")
+
+    return fig
+
+# --------------------------------------------------
+# DRIBBLE MAP
+# --------------------------------------------------
+def plot_dribble_map(df):
+    df = df[df['type'] == 'Dribble'].copy()
+    if df.empty:
+        return None
+
+    df[['x', 'y']] = extract_xy(df, 'location')
+    complete = df[df['dribble_outcome'] == 'Complete']
+    incomplete = df[df['dribble_outcome'] == 'Incomplete']
+
+    pitch = Pitch(pitch_color='white', line_color='black', stripe=False)
+    fig, ax = pitch.draw(figsize=(10, 7))
+
+    pitch.scatter(complete.x, complete.y, color='green', s=120, ax=ax)
+    pitch.scatter(incomplete.x, incomplete.y, color='red', s=120, ax=ax)
+
+    ax.legend(
+        handles=[
+            Patch(facecolor='green', label='Successful Dribble'),
+            Patch(facecolor='red', label='Unsuccessful Dribble')
+        ],
+        bbox_to_anchor=(1.02, 1),
+        loc='upper left',
+        frameon=False
+    )
+    ax.set_title("Dribble Map")
+
+    return fig
+
+# --------------------------------------------------
+# ACTION HEATMAP
+# --------------------------------------------------
+def plot_action_heatmap(df):
+    df = df[df['type'].isin(['Pass', 'Shot', 'Dribble'])].copy()
+    if df.empty:
+        return None
+
+    df[['x', 'y']] = extract_xy(df, 'location')
+
+    pitch = Pitch(pitch_color='white', line_color='black', stripe=False)
+    fig, ax = pitch.draw(figsize=(10, 7))
+
+    pitch.kdeplot(df.x, df.y, fill=True, cmap='hot', ax=ax)
     ax.set_title("Action Heatmap")
 
     return fig
-
 
 # --------------------------------------------------
 # STREAMLIT APP
@@ -218,44 +208,36 @@ def plot_heatmap(df_player):
 def main():
     st.title("⚽ Euro 2024 Player Performance Dashboard")
 
-    events_df, _ = load_euro_data(COMPETITION_ID, SEASON_ID)
-    if events_df.empty:
-        st.error("Failed to load StatsBomb data")
-        return
+    match_ids = load_match_ids(COMPETITION_ID, SEASON_ID)
+    events_df = load_events(match_ids)
 
     minutes_df = get_minutes_played(events_df)
-    minutes_series = minutes_df.set_index('player')['minutes_played']
+    minutes = minutes_df.set_index('player')['minutes_played']
 
-    players = sorted(events_df['player'].dropna().unique())
-    player = st.selectbox("Select Player", players)
-
+    player = st.selectbox("Select Player", sorted(events_df['player'].dropna().unique()))
     df_player = events_df[events_df['player'] == player]
 
-    st.metric("Minutes Played", round(minutes_series.get(player, 0), 1))
+    st.metric("Minutes Played", round(minutes.get(player, 0), 1))
 
     st.subheader("Pass Map")
-    fig = plot_player_actions(df_player, 'Pass', 'Pass Map')
+    fig = plot_pass_map(df_player)
     if fig:
-        st.pyplot(fig, clear_figure=True)
-        plt.close(fig)
+        st.pyplot(fig); plt.close(fig)
 
     st.subheader("Shot Map")
-    fig = plot_player_actions(df_player, 'Shot', 'Shot Map')
+    fig = plot_shot_map(df_player)
     if fig:
-        st.pyplot(fig, clear_figure=True)
-        plt.close(fig)
+        st.pyplot(fig); plt.close(fig)
 
     st.subheader("Dribble Map")
-    fig = plot_player_actions(df_player, 'Dribble', 'Dribble Map')
+    fig = plot_dribble_map(df_player)
     if fig:
-        st.pyplot(fig, clear_figure=True)
-        plt.close(fig)
+        st.pyplot(fig); plt.close(fig)
 
     st.subheader("Action Heatmap")
-    fig = plot_heatmap(df_player)
+    fig = plot_action_heatmap(df_player)
     if fig:
-        st.pyplot(fig, clear_figure=True)
-        plt.close(fig)
+        st.pyplot(fig); plt.close(fig)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
