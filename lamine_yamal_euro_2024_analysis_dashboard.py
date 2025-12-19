@@ -6,6 +6,8 @@ import pandas as pd
 from statsbombpy import sb
 from mplsoccer import Pitch
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 import numpy as np
 
 # --------------------------------------------------
@@ -119,37 +121,73 @@ def plot_player_actions(df_player, action_type, title):
     fig.patch.set_facecolor('white')
     ax.set_facecolor('white')
 
+    legend_elements = []
+
     if action_type == 'Pass':
         success = df[df['pass_outcome'].isna()]
         fail = df[df['pass_outcome'].notna()]
         assists = df[df['pass_goal_assist'].notna()]
 
-        pitch.lines(success['x'], success['y'],
-                    success['pass_end_location'].str[0],
-                    success['pass_end_location'].str[1],
-                    lw=3, color='green', ax=ax)
+        pitch.arrows(
+            success['x'], success['y'],
+            success['pass_end_location'].str[0],
+            success['pass_end_location'].str[1],
+            width=2, headwidth=6, headlength=6,
+            color='green', ax=ax
+        )
 
-        pitch.lines(fail['x'], fail['y'],
-                    fail['pass_end_location'].str[0],
-                    fail['pass_end_location'].str[1],
-                    lw=3, linestyle=':', color='red', ax=ax)
+        pitch.arrows(
+            fail['x'], fail['y'],
+            fail['pass_end_location'].str[0],
+            fail['pass_end_location'].str[1],
+            width=2, headwidth=6, headlength=6,
+            color='red', linestyle=':', ax=ax
+        )
 
-        if not assists.empty:
-            pitch.lines(assists['x'], assists['y'],
-                        assists['pass_end_location'].str[0],
-                        assists['pass_end_location'].str[1],
-                        lw=4, color='yellow', ax=ax)
+        pitch.arrows(
+            assists['x'], assists['y'],
+            assists['pass_end_location'].str[0],
+            assists['pass_end_location'].str[1],
+            width=3, headwidth=8, headlength=8,
+            color='gold', ax=ax
+        )
+
+        legend_elements = [
+            Line2D([0], [0], color='green', lw=3, label='Successful Pass'),
+            Line2D([0], [0], color='red', lw=3, linestyle=':', label='Unsuccessful Pass'),
+            Line2D([0], [0], color='gold', lw=4, label='Assist')
+        ]
 
     elif action_type == 'Shot':
         goals = df[df['shot_outcome'] == 'Goal']
+
         pitch.scatter(df['x'], df['y'], s=120, c='orange', ax=ax)
         pitch.scatter(goals['x'], goals['y'], s=300, marker='football', ax=ax)
+
+        legend_elements = [
+            Patch(facecolor='orange', label='Shot'),
+            Patch(facecolor='white', edgecolor='black', label='Goal')
+        ]
 
     elif action_type == 'Dribble':
         complete = df[df['dribble_outcome'] == 'Complete']
         incomplete = df[df['dribble_outcome'] == 'Incomplete']
+
         pitch.scatter(complete['x'], complete['y'], c='green', s=120, ax=ax)
         pitch.scatter(incomplete['x'], incomplete['y'], c='red', s=120, ax=ax)
+
+        legend_elements = [
+            Patch(facecolor='green', label='Successful Dribble'),
+            Patch(facecolor='red', label='Unsuccessful Dribble')
+        ]
+
+    if legend_elements:
+        ax.legend(
+            handles=legend_elements,
+            loc='upper left',
+            bbox_to_anchor=(1.02, 1),
+            frameon=False
+        )
 
     ax.set_title(title)
     return fig
@@ -170,6 +208,7 @@ def plot_heatmap(df_player):
 
     pitch.kdeplot(df['x'], df['y'], fill=True, cmap='hot', ax=ax)
     ax.set_title("Action Heatmap")
+
     return fig
 
 
