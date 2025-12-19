@@ -257,6 +257,5 @@ def main():
         st.pyplot(fig, clear_figure=True)
         plt.close(fig)
 
-
 if __name__ == '__main__':
     main()
